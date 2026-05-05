@@ -17,6 +17,25 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cached_report(city):
+    return generate_report(city)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cached_satellite_weather(city):
+    return get_weather(city)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def cached_satellite_grid(city):
+    weather = cached_satellite_weather(city)
+    if weather is None:
+        return None
+    temp, humidity, lat, lon = weather
+    return satellite_downscaling(temp, humidity, lat, lon, city=city)
+
 # ─── Custom CSS ──────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -600,7 +619,7 @@ if run_analysis:
 
     if analysis_mode == "Full AQI Report":
         with st.spinner("🔄 Fetching live data & generating predictions..."):
-            data = generate_report(city)
+            data = cached_report(city)
 
         if data is None:
             st.markdown("""
@@ -689,59 +708,70 @@ if run_analysis:
             </div>
             """, unsafe_allow_html=True)
         else:
-            temp, humidity, lat, lon = weather
-
             with st.spinner("🔄 Running satellite downscaling model..."):
-                sat_data = satellite_downscaling(temp, humidity, lat, lon, city=city)
+                sat_data = cached_satellite_grid(city)
 
-            df = pd.DataFrame(sat_data)
+            if sat_data is None:
+                st.markdown("""
+                <div style="text-align: center; padding: 60px 20px;">
+                    <span style="font-size: 4rem;">🌧️</span>
+                    <h3 style="color: #e8edf2; margin-top: 16px;">Weather Data Unavailable</h3>
+                    <p style="color: #7a8ba3; max-width: 400px; margin: 10px auto;">
+                        Could not fetch weather data. Please check your API key and city name.
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                temp, humidity, lat, lon = cached_satellite_weather(city)
 
-            st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+                df = pd.DataFrame(sat_data)
+
+                st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
             # ── Weather + Summary Metrics ──
-            avg_aqi = df["aqi"].mean()
-            max_aqi = df["aqi"].max()
-            min_aqi = df["aqi"].min()
-            level_label, _, level_color = get_aqi_level(avg_aqi)
+                avg_aqi = df["aqi"].mean()
+                max_aqi = df["aqi"].max()
+                min_aqi = df["aqi"].min()
+                level_label, _, level_color = get_aqi_level(avg_aqi)
 
-            def metric_card(title, value, icon, color="#00D4FF"):
-                return f'''
-                <div class="glass-card" style="padding: 16px; margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
-                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                        <span style="color: #94A3B8; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{title}</span>
-                        <span style="font-size: 1.2rem; filter: drop-shadow(0 0 8px {color});">{icon}</span>
+                def metric_card(title, value, icon, color="#00D4FF"):
+                    return f'''
+                    <div class="glass-card" style="padding: 16px; margin-bottom: 0; display: flex; flex-direction: column; justify-content: space-between; height: 100%;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                            <span style="color: #94A3B8; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">{title}</span>
+                            <span style="font-size: 1.2rem; filter: drop-shadow(0 0 8px {color});">{icon}</span>
+                        </div>
+                        <div style="display: flex; align-items: baseline; gap: 8px;">
+                            <span style="color: #E2E8F0; font-size: 2rem; font-weight: 800; letter-spacing: -1px; line-height: 1;">{value}</span>
+                        </div>
                     </div>
-                    <div style="display: flex; align-items: baseline; gap: 8px;">
-                        <span style="color: #E2E8F0; font-size: 2rem; font-weight: 800; letter-spacing: -1px; line-height: 1;">{value}</span>
-                    </div>
-                </div>
-                '''
+                    '''
 
-            mcol1, mcol2, mcol3, mcol4, mcol5 = st.columns(5)
-            with mcol1: st.markdown(metric_card("Temperature", f"{temp}°C", "🌡️"), unsafe_allow_html=True)
-            with mcol2: st.markdown(metric_card("Humidity", f"{humidity}%", "💧"), unsafe_allow_html=True)
-            with mcol3: st.markdown(metric_card("Avg AQI", f"{avg_aqi:.0f}", "📊", level_color), unsafe_allow_html=True)
-            with mcol4: st.markdown(metric_card("Max AQI", f"{max_aqi:.0f}", "📈", "#EF4444"), unsafe_allow_html=True)
-            with mcol5: st.markdown(metric_card("Min AQI", f"{min_aqi:.0f}", "📉", "#22C55E"), unsafe_allow_html=True)
+                mcol1, mcol2, mcol3, mcol4, mcol5 = st.columns(5)
+                with mcol1: st.markdown(metric_card("Temperature", f"{temp}°C", "🌡️"), unsafe_allow_html=True)
+                with mcol2: st.markdown(metric_card("Humidity", f"{humidity}%", "💧"), unsafe_allow_html=True)
+                with mcol3: st.markdown(metric_card("Avg AQI", f"{avg_aqi:.0f}", "📊", level_color), unsafe_allow_html=True)
+                with mcol4: st.markdown(metric_card("Max AQI", f"{max_aqi:.0f}", "📈", "#EF4444"), unsafe_allow_html=True)
+                with mcol5: st.markdown(metric_card("Min AQI", f"{min_aqi:.0f}", "📉", "#22C55E"), unsafe_allow_html=True)
 
-            st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+                st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
             # ── Dashboard Split View ──
-            dash_left, dash_right = st.columns([7, 5], gap="large")
+                dash_left, dash_right = st.columns([7, 5], gap="large")
             
-            with dash_left:
-                st.markdown('<h3 style="color: #E2E8F0; font-size: 1.1rem; margin-bottom: 16px;">Interactive Map</h3>', unsafe_allow_html=True)
-                m = create_folium_map(df, lat, lon)
-                st_folium(m, height=450, use_container_width=True, returned_objects=[])
-                
-                # Distribution Chart below map
-                st.markdown('<h3 style="color: #E2E8F0; font-size: 1.1rem; margin-top: 24px; margin-bottom: 8px;">Distribution</h3>', unsafe_allow_html=True)
+                with dash_left:
+                    st.markdown('<h3 style="color: #E2E8F0; font-size: 1.1rem; margin-bottom: 16px;">Interactive Map</h3>', unsafe_allow_html=True)
+                    m = create_folium_map(df, lat, lon)
+                    st_folium(m, height=450, use_container_width=True, returned_objects=[])
+                    
+                    # Distribution Chart below map
+                    st.markdown('<h3 style="color: #E2E8F0; font-size: 1.1rem; margin-top: 24px; margin-bottom: 8px;">Distribution</h3>', unsafe_allow_html=True)
 
-            import numpy as np
-            fig_hist = go.Figure()
+                import numpy as np
+                fig_hist = go.Figure()
 
-            counts, bins = np.histogram(df["aqi"], bins=15)
-            bin_centers = 0.5 * (bins[:-1] + bins[1:])
+                counts, bins = np.histogram(df["aqi"], bins=15)
+                bin_centers = 0.5 * (bins[:-1] + bins[1:])
 
             # Smooth trendline overlay
             fig_hist.add_trace(go.Scatter(
